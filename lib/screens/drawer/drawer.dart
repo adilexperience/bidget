@@ -1,7 +1,12 @@
+import 'dart:io';
+
 import 'package:bid_get/routes/app_routes.dart';
 import 'package:bid_get/utils/utils_exporter.dart';
+import 'package:bid_get/utils/widgets/widget_exporter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 class BidGetDrawer extends StatefulWidget {
   const BidGetDrawer({Key key}) : super(key: key);
@@ -11,6 +16,9 @@ class BidGetDrawer extends StatefulWidget {
 }
 
 class _BidGetDrawerState extends State<BidGetDrawer> {
+  File _image;
+  bool isLoading = false;
+
   final firebaseFirestore = FirebaseFirestore.instance;
   DocumentSnapshot currentUserSnapshot;
 
@@ -35,19 +43,23 @@ class _BidGetDrawerState extends State<BidGetDrawer> {
               children: [
                 Align(
                   alignment: Alignment.bottomLeft,
-                  child: CircleAvatar(
-                    radius: 42.0,
-                    child: Text(
-                      currentUserSnapshot != null
-                          ? currentUserSnapshot['full_name'][0]
-                          : "U",
-                      style: TextStyle(
-                        color: AppColors.whiteColor,
-                        fontSize: 20.0,
-                      ),
-                    ),
-                    backgroundColor: AppColors.greyColor.withOpacity(0.3),
-                  ),
+                  child: isLoading
+                      ? Center(
+                          child: CircularProgressIndicator(
+                            valueColor: new AlwaysStoppedAnimation<Color>(
+                              AppColors.primaryColor,
+                            ),
+                          ),
+                        )
+                      : UserAvatar(
+                          onPressed: () => _pickImage(),
+                          usernameFirstCharacter: currentUserSnapshot != null
+                              ? currentUserSnapshot['full_name'][0]
+                              : "",
+                          imageURL: currentUserSnapshot != null
+                              ? currentUserSnapshot['profile_image']
+                              : "",
+                        ),
                 ),
                 const SizedBox(height: 10.0),
                 Text(
@@ -151,6 +163,68 @@ class _BidGetDrawerState extends State<BidGetDrawer> {
 
   void _getCurrentUserDetails() async {
     currentUserSnapshot = await Common.currentUserSnapshot();
-    if (currentUserSnapshot != null) setState(() {});
+    if (currentUserSnapshot != null) if (mounted) setState(() {});
+  }
+
+  void _pickImage() async {
+    if (currentUserSnapshot == null ||
+        currentUserSnapshot['user_id'].toString().isEmpty) {
+      return;
+    }
+
+    final picker = ImagePicker();
+    final pickedFile = await picker.getImage(source: ImageSource.gallery);
+
+    if (pickedFile != null) {
+      setState(() {
+        isLoading = true;
+      });
+
+      _image = File(pickedFile.path);
+      final Reference storageRef = FirebaseStorage.instance
+          .ref()
+          .child('Users')
+          .child(currentUserSnapshot['user_id'])
+          .child(new DateTime.now().millisecondsSinceEpoch.toString());
+
+      UploadTask userImageUpload = storageRef
+          .child(new DateTime.now().millisecondsSinceEpoch.toString())
+          .putFile(_image);
+
+      String userImageURL;
+      await userImageUpload.then((res) async {
+        res.ref.getDownloadURL().then((value) {
+          userImageURL = value;
+
+          //storing user image in profile of fire-store
+          if (userImageURL != null) {
+            FirebaseFirestore.instance
+                .collection("Users")
+                .doc(currentUserSnapshot['user_id'])
+                .update({'profile_image': userImageURL}).then(
+              (value) {
+                if (mounted) {
+                  setState(() {
+                    isLoading = false;
+                    _getCurrentUserDetails();
+                  });
+                }
+              },
+            ).onError((error, stackTrace) {
+              if (mounted) {
+                setState(() {
+                  isLoading = false;
+                });
+              }
+              Common.showOnePrimaryButtonDialog(
+                context: context,
+                dialogMessage: error.toString(),
+                primaryButtonText: "Okay",
+              );
+            });
+          }
+        });
+      });
+    }
   }
 }

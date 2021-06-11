@@ -1,10 +1,15 @@
+import 'dart:io';
+
 import 'package:bid_get/routes/app_routes.dart';
 import 'package:bid_get/screens/screen_exporter.dart';
 import 'package:bid_get/utils/utils_exporter.dart';
+import 'package:bid_get/utils/widgets/widget_exporter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:image_picker/image_picker.dart';
 
 class Profile extends StatefulWidget {
   const Profile({
@@ -20,6 +25,9 @@ class _ProfileState extends State<Profile> {
   DocumentSnapshot currentUserSnapshot;
 
   bool isLoading = true;
+
+  File _image;
+  bool isImageLoading = false;
 
   @override
   void initState() {
@@ -41,22 +49,26 @@ class _ProfileState extends State<Profile> {
           children: [
             !isLoading
                 ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const SizedBox(height: 20.0),
-                      CircleAvatar(
-                        radius: 50.0,
-                        child: Text(
-                          currentUserSnapshot != null
-                              ? currentUserSnapshot['full_name'][0]
-                              : "---",
-                          style: TextStyle(
-                            color: AppColors.whiteColor,
-                            fontSize: 20.0,
-                          ),
-                        ),
-                        backgroundColor: AppColors.greyColor.withOpacity(0.3),
-                      ),
+                      isImageLoading
+                          ? Center(
+                              child: CircularProgressIndicator(
+                                valueColor: new AlwaysStoppedAnimation<Color>(
+                                  AppColors.primaryColor,
+                                ),
+                              ),
+                            )
+                          : UserAvatar(
+                              onPressed: () => _pickImage(),
+                              usernameFirstCharacter:
+                                  currentUserSnapshot != null
+                                      ? currentUserSnapshot['full_name'][0]
+                                      : "",
+                              imageURL: currentUserSnapshot != null
+                                  ? currentUserSnapshot['profile_image']
+                                  : "",
+                            ),
                       const SizedBox(height: 10.0),
                       Text(
                         "${currentUserSnapshot['full_name']}",
@@ -457,6 +469,68 @@ class _ProfileState extends State<Profile> {
     if (currentUserSnapshot != null) {
       setState(() {
         isLoading = false;
+      });
+    }
+  }
+
+  void _pickImage() async {
+    if (currentUserSnapshot == null ||
+        currentUserSnapshot['user_id'].toString().isEmpty) {
+      return;
+    }
+
+    final picker = ImagePicker();
+    final pickedFile = await picker.getImage(source: ImageSource.gallery);
+
+    if (pickedFile != null) {
+      setState(() {
+        isImageLoading = true;
+      });
+
+      _image = File(pickedFile.path);
+      final Reference storageRef = FirebaseStorage.instance
+          .ref()
+          .child('Users')
+          .child(currentUserSnapshot['user_id'])
+          .child(new DateTime.now().millisecondsSinceEpoch.toString());
+
+      UploadTask userImageUpload = storageRef
+          .child(new DateTime.now().millisecondsSinceEpoch.toString())
+          .putFile(_image);
+
+      String userImageURL;
+      await userImageUpload.then((res) async {
+        res.ref.getDownloadURL().then((value) {
+          userImageURL = value;
+
+          //storing user image in profile of fire-store
+          if (userImageURL != null) {
+            FirebaseFirestore.instance
+                .collection("Users")
+                .doc(currentUserSnapshot['user_id'])
+                .update({'profile_image': userImageURL}).then(
+              (value) {
+                if (mounted) {
+                  setState(() {
+                    isImageLoading = false;
+                    _getCurrentUserDetails();
+                  });
+                }
+              },
+            ).onError((error, stackTrace) {
+              if (mounted) {
+                setState(() {
+                  isImageLoading = false;
+                });
+              }
+              Common.showOnePrimaryButtonDialog(
+                context: context,
+                dialogMessage: error.toString(),
+                primaryButtonText: "Okay",
+              );
+            });
+          }
+        });
       });
     }
   }

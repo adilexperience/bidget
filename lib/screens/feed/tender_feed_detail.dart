@@ -237,7 +237,10 @@ class _TenderFeedDetailState extends State<TenderFeedDetail> {
                                           controller: bidAmountController,
                                           keyboardType: TextInputType.number,
                                           decoration: InputDecoration(
-                                            hintText: "20,000",
+                                            hintText: tenderSnapshot[
+                                                        'starting_bid_double']
+                                                    .toString() ??
+                                                "20,000",
                                             hintStyle: TextStyle(
                                               color: AppColors.greyColor,
                                             ),
